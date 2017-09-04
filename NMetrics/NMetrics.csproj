@@ -50,6 +50,18 @@
       <HintPath>..\packages\Mono.Cecil.0.9.6.4\lib\net45\Mono.Cecil.Rocks.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="QuickGraph, Version=3.6.61114.0, Culture=neutral, PublicKeyToken=f3fb40175eec2af3, processorArchitecture=MSIL">
+      <HintPath>..\packages\QuickGraphPCL.3.6.61114.2\lib\net40-client\QuickGraph.dll</HintPath>
+    </Reference>
+    <Reference Include="QuickGraph.Data, Version=3.6.61114.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\QuickGraphPCL.3.6.61114.2\lib\net40-client\QuickGraph.Data.dll</HintPath>
+    </Reference>
+    <Reference Include="QuickGraph.Graphviz, Version=3.6.61114.0, Culture=neutral, PublicKeyToken=f3fb40175eec2af3, processorArchitecture=MSIL">
+      <HintPath>..\packages\QuickGraphPCL.3.6.61114.2\lib\net40-client\QuickGraph.Graphviz.dll</HintPath>
+    </Reference>
+    <Reference Include="QuickGraph.Serialization, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\QuickGraphPCL.3.6.61114.2\lib\net40-client\QuickGraph.Serialization.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Xml.Linq" />
@@ -62,10 +74,23 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AssemblyListExtension.cs" />
+    <Compile Include="CompactedUsageInfo.cs" />
+    <Compile Include="EnumerableExtensions.cs" />
+    <Compile Include="MemberComparer.cs" />
+    <Compile Include="MemberEqualityComparer.cs" />
     <Compile Include="MonoCecilExtensions.cs" />
+    <Compile Include="QuickGraphExtensions.cs" />
+    <Compile Include="Program - Copy.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="TestClasses\ITestInterface.cs" />
+    <Compile Include="TestClasses\TestClass00.cs" />
+    <Compile Include="TestClasses\TestClass01.cs" />
+    <Compile Include="TestClasses\TestClass02.cs" />
+    <Compile Include="TestClasses\TestParameter01.cs" />
+    <Compile Include="TypeCacheInfo.cs" />
     <Compile Include="UsageInfo.cs" />
+    <Compile Include="UsageInfoExtensions.cs" />
     <Compile Include="UsageKind.cs" />
   </ItemGroup>
   <ItemGroup>

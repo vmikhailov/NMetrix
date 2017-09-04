@@ -3,6 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Mono.Cecil;
+using QuickGraph;
+using QuickGraph.Algorithms;
+using QuickGraph.Graphviz;
+using QuickGraph.Graphviz.Dot;
 
 namespace NMetrics
 {
@@ -13,118 +17,145 @@ namespace NMetrics
             MainMonexPay(args);
         }
 
-        private static void MainPOneUI(string[] args)
+        private static void MainThis(string[] args)
         {
-            var path = @"C:\Work\LayerOne\CurrentSources\P1TC.UI\POne.UI\bin\Debug\";
-            var assemblies = ScanDirectory(path, "*.dll;*.exe");
-            var app = assemblies.ToList();
+            var path1 = new FileInfo(System.Reflection.Assembly.GetExecutingAssembly().Location).DirectoryName;
+            var mask = "*.dll;*.exe";
+            var app = ScanDirectory(path1, mask).ToList();
 
-            var allServiceClients = app.GetTypes("Client$")
-                                       .Where(x => x.BaseType is TypeDefinition)
-                                       .Select(y => (GenericInstanceType)y.BaseType)
-                                       .Select(y => y.GenericArguments.First().Resolve())
-                                       //.Except(internalServiceClients.Values.SelectMany(x => x))
-                                       .ToList();
+            var repoInterfaces = app.GetTypes().InterfacesOnly().ToList();
 
-            foreach (var client in allServiceClients)
-            {
-                Console.WriteLine($"{client.FullName} used in {client.Scope}");
-            }
+            //var x = app.GetTypes("Test.*$").ClassesOnly().Usages();
+
         }
 
-        private static void MainPOneCore(string[] args)
+        private static IEnumerable<TypeDefinition> GetEntryPoints(List<AssemblyDefinition> app)
         {
-            var path = @"C:\Work\LayerOne\CurrentSources\P1TC.Core\.Build\Debug";
-            var assemblies = ScanDirectory(path, "*.dll;*.exe");
-            var app = assemblies.ToList();
-
-            var services = app.GetTypes().WithAttribute("ServiceModule").ToList();
-
-            foreach (var t in app.GetTypes().Where(x => !x.Namespace.StartsWith("System.")).GroupBy(x => x.Namespace))
-            {
-                foreach (var tt in t)
-                {
-                    tt.DirectlyUsed();
-                }
-            }
-
-            var allServiceClients = app.GetTypes("Client$")
-                                            .Where(x => x.BaseType?.Name == "ClientBase`1")
-                                            .Select(y => (GenericInstanceType)y.BaseType)
-                                            .Select(y => y.GenericArguments.First().Resolve())
-                                            //.Except(internalServiceClients.Values.SelectMany(x => x))
-                                            .ToList();
-            var broadcastService = app.GetTypes("BroadcastQuery`1").ToList();
-            var dataChangedUsage = app.GetTypes("DataChangeEvent").ToList(); 
-
-            foreach (var service in services)
-            {
-                var allUsedByService = service.GetAllUsedTypes(new HashSet<string>{ "POne", "Fortress", "P1TC", "LayerOne" }).ToList();
-                var broadcastUsage = allUsedByService
-                    .Intersect(dataChangedUsage, new TypeDefinitionEqualityComparer())
-                    .ToList();
-
-                Console.WriteLine(broadcastUsage.Any()
-                                      ? $"{service.FullName} {service.Scope.Name} broadcast"
-                                      : $"{service.FullName} {service.Scope.Name} no broadcast");
-
-                var otherUsedServices = allUsedByService.Intersect(allServiceClients, new TypeDefinitionEqualityComparer()).ToList();
-
-                if (otherUsedServices.Any())
-                {
-                    foreach (var remoteService in otherUsedServices)
-                    {
-                        //Console.WriteLine($"{service.FullName} {service.Scope.Name} {remoteService.FullName} {remoteService.Scope.Name}");
-                    }
-                }
-                else
-                {
-                    //Console.WriteLine($"{service.FullName} {service.Scope.Name}");
-                }
-            }
+            //webapi contollers;
+            var webApiControllers = 
+                app.GetTypes("System.*ApiController$")
+                .Union(app.GetTypes("System.*.Web.*Controller$"))
+                .ToList();
+            var api = app.GetTypes().InheritedFrom(webApiControllers).ToList();
+            return api;
         }
 
         private static void MainMonexPay(string[] args)
         {
-            var path1 = @"C:\Work\Monex\fxdb2\ossrc\Bin";
+            // var path1 = @"C:\Work\Monex\fxdb2\ossrc\Bin";
+            var path1 = @"C:\Work\Monex\fxdb2\src\Bin";
+            //var path2 = @"C:\Work\Monex\Monex Payroll\PayrollPoC\PayrollPoC\bin\Debug"\
+            //var path1 = @"C:\Work\Monex\Monex Payroll\PayrollPoC\PayrollPoC\Bin\Debug";
             var mask = "*.dll;*.exe";
             //var assemblies = ScanDirectory(path1, mask)
             //    .Union(ScanDirectory(path2, mask))
             //    .DedupFiles();
             var app = ScanDirectory(path1, mask).ToList();
 
+            Func<TypeReference, bool> filter = x => x.Namespace.StartsWith("Monex") || x.Namespace.Contains("FXDB");
+            //Func<TypeReference, bool> filter = x => !x.Namespace.StartsWith("System");
             var repoInterfaces = app.GetTypes().InterfacesOnly().ToList();
+            var monexTypes = app.GetTypes(".*$").Where(filter).Resolve().ToList(); 
 
+            var entries = GetEntryPoints(app);
+            var entriesUsage = entries.Usages(filter).ToList();
+            var c1 = entriesUsage.Compact();
+
+            var usage = monexTypes.ClassesOnly().Usages(filter).ToList();
+
+            var interf = usage.Where(x => (x.UsageKind & UsageKind.Interface) > 0)
+                .ToLookup(x => x.UsedType, x => x.UsingType)
+                .SelectMany(x => x.Select(y => UsageInfo.ImplementedBy(x.Key.SmartResolve(), y)));
+
+            usage.AddRange(interf);
+
+            var distinctTypesRelations = usage.Compact();
+
+            var g = new AdjacencyGraph<string, TaggedEdge<string, List<UsageInfo>>>(false);
+            var g4 = new BidirectionalGraph<string, TaggedEdge<string, List<UsageInfo>>>(false);
+
+            g.AddVerticesAndEdgeRange(distinctTypesRelations.Select(x => new TaggedEdge<string, List<UsageInfo>>(x.Source, x.Target, x.Usage)));
+            g4.AddVerticesAndEdgeRange(distinctTypesRelations.Select(x => new TaggedEdge<string, List<UsageInfo>>(x.Source, x.Target, x.Usage)));
+            g.TrimEdgeExcess();
+
+            var allPaths = new List<IEnumerable<TypeReference>>();
+            var allPathStrings = new List<string>();
+            var g2 = new AdjacencyGraph<string, Edge<string>>(false);
+
+            var sourceTypes = monexTypes.Filtered(".*Service$")
+                .Union(monexTypes.Filtered(".*Controller"))
+                .ClassesOnly()
+                .Select(x => x.FullName)
+                .ToHashSet();
+
+            var alllll = monexTypes.IncludingNested().ToList();
+
+            var targetTypes = monexTypes
+                //.Filtered("F.*Context$")
+                .IncludingNested()
+                .Filtered("Netdania")
+                .ClassesOnly()
+                .Select(x => x.FullName)
+                .ToHashSet();
+
+            foreach (var controller in g.Vertices.Where(x => sourceTypes.Contains(x)))
+            {
+                var pathFromContoller = g.ShortestPathsDijkstra(x => 1, controller);
+                foreach (var repo in g.Vertices.Where(x => targetTypes.Contains(x)))
+                {
+                    IEnumerable<TaggedEdge<string, List<UsageInfo>>> path;
+                    if (pathFromContoller(repo, out path))
+                    {
+                        var hops = path.Where(x => (x.Tag.First().UsageKind & UsageKind.InterfaceImplementation) == 0)
+                            .Select(x => x.Tag.First().UsingType)
+                            .Concat(Enumerable.Repeat(path.Last().Tag.First().UsedType, 1))
+                            .ToList();
+
+                        allPaths.Add(hops);
+                        foreach (var segment in path)
+                        {
+                            g2.AddVerticesAndEdge(new Edge<string>(segment.Tag.First().UsingType.GetShortName(), segment.Tag.First().UsedType.GetShortName()));
+                        }
+                    }
+                }
+            }
+            g2.TrimEdgeExcess();
+
+            foreach (var path in allPaths)
+            {
+                var pathString = string.Join(" -> ", path.Select(x => x.GetShortName()));
+                allPathStrings.Add(pathString);
+            }
+
+            var typesToKeep = monexTypes.Filtered(".*Program$")
+                .Union(monexTypes.Filtered(".*Context$"))
+                .Union(monexTypes.Filtered(".*Global.*$"))
+                .Union(monexTypes.Filtered(".*Repository.*$"))
+                .Union(monexTypes.Filtered(".*FxdbModel.*$"))
+                .Select(x => x.FullName);
+
+            var g3 = new AdjacencyGraph<string, TaggedEdge<string, List<UsageInfo>>>(false);
+            g.BuildSubGraph(g3, typesToKeep, (x, y) => new TaggedEdge<string, List<UsageInfo>>(x, y, null));
+
+            // var graphviz = new GraphvizAlgorithm<string, Edge<string>>(g3);
+            var graphviz = new GraphvizAlgorithm<string, TaggedEdge<string, List<UsageInfo>>>(g3);
+            graphviz.FormatVertex += Graphviz_FormatVertex;
+
+            // render
+            string output = graphviz.Generate();
+
+
+            foreach (var pathString in allPathStrings.Distinct().OrderBy(x => x).ThenBy(x => x.Length))
+            {
+                Console.WriteLine(pathString);
+            }
             var dbContextTypes = app.GetTypes("FxdbContext$").ToList();
             var repoTypes = app.GetTypes("Repository$").ToList();
-            var allTypesToSearch = repoTypes.Concat(dbContextTypes);
-            var allUsages = app.GetTypes().ClassesOnly().UsingType(allTypesToSearch).ToList();
-
-            Dump(Filter(app, allUsages, "Controller$"), "UI");
-            Dump(Filter(app, allUsages, "Page$"), "UI");
-            Dump(Filter(app, allUsages, "Service$"), "Service");
-            Dump(Filter(app, allUsages, "Repository$"), "Repository");
-            Dump(Filter(app, allUsages, "Report$"), "Report");
-            Dump(Filter(app, allUsages, "Activity$"), "Activity");
         }
 
-        private static void MainFXDB(string[] args)
+        private static void Graphviz_FormatVertex(object sender, FormatVertexEventArgs<string> e)
         {
-            var path = @"C:\Work\Monex\fxdb2\src\FXDB2.Web\bin";
-            var assemblies = ScanDirectory(path, "*.dll;*.exe");
-            var app = assemblies.ToList();
-
-            var dbContextTypes = app.GetTypes("FXDB2Context$").ToList();
-            var repoTypes = app.GetTypes("Repository$").ToList();
-            var allTypesToSearch = repoTypes.Concat(dbContextTypes);
-            var allUsages = app.GetTypes().ClassesOnly().UsingType(allTypesToSearch).ToList();
-
-            Dump(Filter(app, allUsages, "Controller$"), "UI");
-            Dump(Filter(app, allUsages, "Page$"), "UI");
-            Dump(Filter(app, allUsages, "Service$"), "Service");
-            Dump(Filter(app, allUsages, "Repository$"), "Repository");
-            Dump(Filter(app, allUsages, "Report$"), "Report");
-            Dump(Filter(app, allUsages, "Activity$"), "Activity");
+            //throw new NotImplementedException();
         }
 
         private static IEnumerable<UsageInfo> Filter(List<AssemblyDefinition> assemblies, List<UsageInfo> usages,
@@ -150,8 +181,14 @@ namespace NMetrics
         {
             var resolver = new DefaultAssemblyResolver();
             resolver.AddSearchDirectory(path);
-            var readerParameters = new ReaderParameters { AssemblyResolver = resolver };
+
+            var readerParameters = new ReaderParameters
+            {
+                AssemblyResolver = resolver,
+                ReadingMode = ReadingMode.Deferred
+            };
             var assemblies = new List<AssemblyDefinition>();
+
             AppendDirectory(assemblies, path, mask, readerParameters);
             return assemblies;
         }
@@ -160,7 +197,10 @@ namespace NMetrics
             ReaderParameters param)
         {
             var masks = mask?.Split(';') ?? new[] { string.Empty };
-
+            if (!new DirectoryInfo(path).Exists)
+            {
+                return;
+            }
             foreach (var singleMask in masks)
             {
                 var files = Directory.EnumerateFiles(path, singleMask, SearchOption.AllDirectories).ToList();
@@ -189,6 +229,14 @@ namespace NMetrics
             {
                 //assembly may not load for various reasons.
                 return false;
+            }
+        }
+
+        public class FileDotEngine : IDotEngine
+        {
+            public string Run(GraphvizImageType imageType, string dot, string outputFileName)
+            {
+                throw new NotImplementedException();
             }
         }
     }
