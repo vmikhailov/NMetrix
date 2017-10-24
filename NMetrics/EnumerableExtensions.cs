@@ -8,21 +8,29 @@ namespace NMetrics
 {
     public static class EnumerableExtensions
     {
-        public static IEnumerable<T> FillIteratively<T>(this IEnumerable<T> init, Func<T, IEnumerable<T>> func)
+        public static IEnumerable<T> Traverse<T>(this IEnumerable<T> init, Func<T, IEnumerable<T>> next, 
+            bool includeInit = true, IEqualityComparer<T> comparer = null)
         {
-            IEnumerable<T> all = init.ToList();
-            var current = all;
-            while (current.Any())
+            var processed = new HashSet<T>(comparer);
+            var currentLevel = init.ToHashSet(comparer);
+            var firstLevel = true;
+
+            while (currentLevel.Any())
             {
-                IEnumerable<T> result = new T[0];
-                result = current.Aggregate(result, (x, y) => x.Union(func(y))).Except(all).ToList();
-                foreach (var r in result)
+                var nextLevel = currentLevel.SelectMany(next).ToHashSet(comparer);
+                if (includeInit || !firstLevel)
                 {
-                    yield return r;
+                    processed.UnionWith(currentLevel);
                 }
-                current = result;
+                firstLevel = false;
+                currentLevel = nextLevel;
+                currentLevel.ExceptWith(processed);
             }
+            return processed;
         }
+
+        //public static IEnumerable<T> Traversal<T>(this IEnumerable<T> init, 
+        //    Func<T, IEnumerable<T>>
 
         public static IEnumerable<T> AsEnumerableWithOneItem<T>(this T obj)
         {
@@ -31,5 +39,11 @@ namespace NMetrics
                 yield return obj;
             }
         }
+
+        public static IEnumerable<T> Ordered<T>(this IEnumerable<T> collection, IComparer<T> comparer = null)
+        {
+            return collection.OrderBy(x => x, comparer);
+        }
+
     }
 }

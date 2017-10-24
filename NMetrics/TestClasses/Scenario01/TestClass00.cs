@@ -1,6 +1,6 @@
-namespace NMetrics.TestClasses
+namespace NMetrics.TestClasses.Scenario01
 {
-    public class TestClass00 : ITestInterface
+    public class TestClass00
     {
         public TestClass00(ITestInterface param)
         {

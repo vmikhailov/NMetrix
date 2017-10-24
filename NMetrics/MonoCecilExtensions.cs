@@ -2,10 +2,16 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
+using NMetrics.Relations;
 using QuickGraph;
+using QuickGraph.Algorithms;
+using QuickGraph.Graphviz;
+using MoreLinq;
 
 namespace NMetrics
 {
@@ -20,7 +26,7 @@ namespace NMetrics
 
         public static IEnumerable<TypeDefinition> GetTypes(this AssemblyDefinition assembly)
         {
-            return assembly.MainModule.Types;
+            return assembly.Modules.SelectMany(x => x.Types);
         }
 
         public static IEnumerable<TypeDefinition> GetTypes(this IEnumerable<AssemblyDefinition> assemblies)
@@ -120,7 +126,7 @@ namespace NMetrics
             }
         }
 
-        private static MethodDefinition SmartResolve(this MethodReference reference)
+        public static MethodDefinition SmartResolve(this MethodReference reference)
         {
             MemberReference td;
             if (!cache.TryGetValue(reference, out td))
@@ -164,63 +170,22 @@ namespace NMetrics
             return types.Where(x => x.CustomAttributes.Any(y => regex.IsMatch(y.AttributeType.Name)));
         }
 
-        public static IEnumerable<TypeDefinition> InheritedFrom(this IEnumerable<TypeDefinition> types,
-            IEnumerable<TypeDefinition> baseTypes)
+        public static ISet<T> ToHashSet<T>(this IEnumerable<T> collection)
         {
-            var dictionaryByBaseType = types
-                .Where(x => x.BaseType != null)
-                .ToLookup(x => x.BaseType.FullName)
-                .ToDictionary(x => x.Key, x => x.ToMembersSet());
-
-            var result = new HashSet<TypeDefinition>(new MemberEqualityComparer<TypeDefinition>());
-            var toProcess = baseTypes.ToMembersSet();
-            //return types.Where(x => GetFullHierachy(x).Intersect(baseTypesList).Any());
-            while (true)
-            {
-                ISet<TypeDefinition> derivedTypes;
-                var nextLevel = new HashSet<TypeDefinition>(new MemberEqualityComparer<TypeDefinition>());
-                foreach (var t in toProcess)
-                {
-                    if (dictionaryByBaseType.TryGetValue(t.FullName, out derivedTypes))
-                    {
-                        nextLevel.UnionWith(derivedTypes);
-                    }
-                }
-                if (!nextLevel.Any())
-                {
-                    break;
-                }
-                result.UnionWith(nextLevel);
-                toProcess = nextLevel;
-            }
-            return result;
+            return new HashSet<T>(collection);
         }
 
-        public static ISet<T> ToHashSet<T>(this IEnumerable<T> collection, IEqualityComparer<T> comparer = null)
-        {
-            return new HashSet<T>(collection, comparer);
-        }
 
-        public static ISet<T> ToSortedSet<T>(this IEnumerable<T> collection, IComparer<T> comparer = null)
+        public static ISet<T> ToHashSet<T, TV>(this IEnumerable<T> collection, IEqualityComparer<TV> comparer = null)
+            where T : TV
         {
-            return new SortedSet<T>(collection, comparer);
+            return new HashSet<T>(collection, comparer as IEqualityComparer<T>);
         }
 
         public static ISet<T> ToMembersSet<T>(this IEnumerable<T> collection)
-            where T : MemberReference
+            where T : TypeReference
         {
-            return collection.ToHashSet(new MemberEqualityComparer<T>());
-        }
-
-        public static ISet<T> MergeSets<T>(this IEnumerable<ISet<T>> sets)
-            where T : MemberReference
-        {
-            var union = new HashSet<T>(new MemberEqualityComparer<T>());
-            foreach (var st in sets)
-            {
-                union.UnionWith(st);
-            }
-            return union;
+            return collection.ToHashSet(new TypeReferenceEqualityComparer());
         }
 
         public static IEnumerable<TypeDefinition> WithInterface(
@@ -248,192 +213,11 @@ namespace NMetrics
             return types.WithInterface(assemblies.GetTypes(interfaceName).InterfacesOnly());
         }
 
-        private static readonly ISet<string> processedTypes = new HashSet<string>();
-
         // public static IShallowTypesGraph Usages(
 
-        public static IEnumerable<UsageInfo> Usages(
-            this IEnumerable<TypeReference> entryPoints,
-            Func<TypeReference, bool> typeFilter = null,
-            Func<MethodDefinition, bool> methodFilter = null)
+        public static bool HasCustomAttribute<T>(this TypeDefinition type)
         {
-            typeFilter = typeFilter ?? (t => !t.Namespace.StartsWith("System"));
-            methodFilter = methodFilter ?? (m => true);
-            var result = new List<IEnumerable<UsageInfo>>();
-            var currentLevel = entryPoints.ToHashSet();
-            while (currentLevel.Any())
-            {
-                var nextLevel = new List<IEnumerable<TypeReference>>();
-                var nextLevelSingleTypes = new List<TypeReference>();
-                nextLevel.Add(nextLevelSingleTypes);
-
-                foreach (var tp in currentLevel)
-                {
-                    if (tp.IsGenericParameter)
-                    {
-                        var gp = tp as GenericParameter;
-                        nextLevel.Add(gp.Constraints);
-                        //emit usage of type as generic parameter contraints
-                        continue;
-                    }
-
-                    if (tp.IsGenericInstance)
-                    {
-                        var gi = tp as GenericInstanceType;
-                        nextLevelSingleTypes.Add(gi.GetElementType());
-                        //emit usage of type as generic instance
-
-                        nextLevel.Add(gi.GenericArguments);
-                        //emit usage of types as generic instance arguments
-                        continue;
-                    }
-
-                    if (tp.IsArray || tp.IsByReference)
-                    {
-                        nextLevelSingleTypes.Add(tp.GetElementType());
-                        //emit usage of type as generic parameter
-                        continue;
-                    }
-
-                    if (tp.IsFunctionPointer || tp.IsPointer)
-                    {
-                        //too complicated;
-                        continue;
-                    }
-
-
-                    var resolvedType = tp.SmartResolve();
-                    if (resolvedType == null)
-                    {
-                    }
-                    var usage = resolvedType.UsagesForConreteType(typeFilter, methodFilter).ToList();
-                    nextLevel.Add(usage.Select(x => x.UsedType));//.ToHashSet());
-                    result.Add(usage);
-                }
-                currentLevel = nextLevel.SelectMany(x => x).Where(typeFilter).ToHashSet();
-            }
-            return result.SelectMany(x => x);
-        }
-
-        //public static IEnumerable<UsageInfo> Usages(
-        //    this TypeReference type,
-        //    Func<TypeReference, bool> typeFilter = null,
-        //    Func<MethodDefinition, bool> methodFilter = null)
-        //{
-
-        //    return type
-        //        .GetFullHierachy()
-        //        .Where(typeFilter)
-        //        .SelectMany(t => t.UsagesForConreteType(typeFilter, methodFilter))
-        //        ;//.ToList();
-        //}
-
-        private static bool HasCustomAttribute<T>(this TypeDefinition type)
-        {
-            return type.HasCustomAttributes && type.CustomAttributes.Any(x => x.AttributeType.Name == nameof(T));
-        }
-
-        public static IEnumerable<UsageInfo> UsagesForConreteType(
-            this TypeDefinition type,
-            Func<TypeReference, bool> typeFilter,
-            Func<MethodDefinition, bool> methodFilter)
-        {
-            //resolve type to get interfaces, methods and code
-            //var typeDef = type.SmartResolve();
-            if (processedTypes.Contains(type.FullName))
-            {
-                return Enumerable.Empty<UsageInfo>();
-            }
-            processedTypes.Add(type.FullName);
-
-            Func<TypeReference, bool> compilerGenerated =
-                x => x.FullName.StartsWith("<>") || (x.SmartResolve()?.HasCustomAttribute<CompilerGeneratedAttribute>() ?? false);
-
-            //generics are available only on typereference
-            var baseClass = type.BaseType.AsEnumerableWithOneItem().Select(x => UsageInfo.InheritedFrom(type, x));
-            var nested = type.NestedTypes.Select(x => UsageInfo.ContainsNested(type, x));
-            // var generics = type.GetGenericArguments().Select(x => UsageInfo.AsGenericParameter(typeDef, x)).ToList();
-            var interfaces = type.Interfaces.Select(x => UsageInfo.Implements(type, x)).ToList();
-            var methodsToInspect = type.Methods.Where(x => x.HasBody && methodFilter(x)).ToList();
-
-            var usageAsMethodParameter =
-                from m in methodsToInspect
-                from p in m.Parameters
-                select UsageInfo.AsMethodParameter(type, m, p.ParameterType);
-
-            var usageAsReturnType =
-                from m in methodsToInspect
-                select UsageInfo.AsMethodReturnType(type, m, m.ReturnType);
-
-            var usageInCode =
-                from m in methodsToInspect
-                from i in m.Body.Instructions
-                where i.Operand != null
-                let u = GetUsagesInConreteInstruction(m, i)
-                where u != null
-                select u;
-
-            var allUsages = baseClass
-                .Concat(nested)
-                //.Concat(generics)
-                .Concat(interfaces)
-                .Concat(usageAsMethodParameter)
-                .Concat(usageAsReturnType)
-                .Concat(usageInCode)
-                .Where(x => !x.UsedType.IsPrimitive & !x.UsedType.Namespace.StartsWith("System"))
-                .Where(x => !compilerGenerated(x.UsedType));
-
-            return allUsages;
-        }
-
-        private static UsageInfo GetUsagesInConreteInstruction(MethodDefinition method, Instruction instruction)
-        {
-            var op = instruction.Operand;
-            //direct mention that types in all method's instructions 
-            var typeRef = op as TypeReference;
-            if (typeRef != null)
-            {
-                return new UsageInfo
-                (
-                    usingType: method.DeclaringType,
-                    usingMethod: method,
-                    usedType: typeRef,
-                    usedMethod: null,
-                    op: instruction,
-                    offset: instruction.Offset,
-                    kind: UsageKind.TypeReference
-                );
-            }
-
-            var methodRef = op as MethodReference;
-            if (methodRef != null)
-            {
-                var resolvedMethod = methodRef.SmartResolve();
-                return new UsageInfo
-                (
-                    usingType: method.DeclaringType,
-                    usingMethod: method,
-                    usedType: methodRef.DeclaringType,
-                    usedMethod: methodRef.GetElementMethod(),
-                    op: instruction,
-                    offset: instruction.Offset,
-                    kind: resolvedMethod != null
-                        ? (resolvedMethod.IsGetter
-                            ? UsageKind.ImmutableAccess
-                            : (resolvedMethod.IsConstructor ? UsageKind.Construction : UsageKind.MutableAccess))
-                        : UsageKind.Unknown
-                //| (c.OpCode == OpCodes.Newobj ? UsageKind.Explicit : UsageKind.Implicit)
-                );
-            }
-
-            if (op is FieldDefinition || op is ParameterDefinition || op is Instruction || op is VariableDefinition)
-            {
-                //just skip it for now. 
-                return null;
-            }
-
-            //unknown op
-            return null;
+            return type.HasCustomAttributes && type.CustomAttributes.Any(x => x.AttributeType.FullName == typeof(T).FullName);
         }
 
         public static string GetShortName(this TypeReference type)
@@ -451,9 +235,5 @@ namespace NMetrics
                 return type.Name;
             }
         }
-    }
-
-    public interface IShallowTypesGraph : IBidirectionalGraph<string, TaggedEdge<string, List<UsageInfo>>>
-    {
     }
 }

@@ -145,7 +145,7 @@ namespace NMetrics
             foreach (var uu in usages)
             {
                 Console.WriteLine(
-                    $"{uu.UsingType.FullName}, {uu.UsingMethod.Name}, {layer}, {uu.UsedType.Name}, {uu.UsedMethod?.Name ?? "_"}, {uu.UsageKind}");
+                    $"{uu.UsingType.FullName}, {uu.UsingMethod.Name}, {layer}, {uu.UsedType.Name}, {uu.UsedMethod?.Name ?? "_"}, {uu.RelationKind}");
             }
         }
 
@@ -194,6 +194,23 @@ namespace NMetrics
                 return false;
             }
         }
+
+    
+            foreach (var t in allTypes.Except(entries))
+            {
+                var l1 = entries.Take(1).ToList();
+                var l2 = new List<TypeReference>(l1);
+                l2.Add(t);
+
+                var g11 = l1.BuildDependencyGraph();
+                var g21 = l2.BuildDependencyGraph();
+
+                if (g11.VertexCount > g21.VertexCount)
+                {
+                    var g12 = l1.BuildDependencyGraph();
+                    var g22 = l2.BuildDependencyGraph();
+                }
+            }
     }
     */
 }
